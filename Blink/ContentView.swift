@@ -8,6 +8,7 @@ struct ContentView: View {
     
     // Editor State
     @StateObject private var sidebarViewModel = SidebarViewModel()
+    @State private var sidebarState: SidebarState = .explorer
     @State private var openFiles: [URL] = []
     @State private var activeFileURL: URL?
     @State private var fileContents: [URL: String] = [:]
@@ -209,8 +210,25 @@ struct ContentView: View {
             Divider().background(Theme.border)
             
             // Main workspace: Resizable Split View
-            HSplitView {
-                SidebarView(viewModel: sidebarViewModel)
+            HStack(spacing: 0) {
+                ActivityBar(selectedState: $sidebarState)
+                
+                HSplitView {
+                    Group {
+                        if sidebarState == .explorer {
+                            SidebarView(viewModel: sidebarViewModel)
+                        } else if sidebarState == .search {
+                            SearchView(currentDirectory: currentSketchDirectory) { url in
+                                openFile(url)
+                            }
+                        } else {
+                            Text("Source Control\n(Coming Soon)")
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(Theme.panelBackground)
+                        }
+                    }
                     .frame(minWidth: 150, idealWidth: 200, maxWidth: 300)
                 
                 VSplitView {
@@ -230,25 +248,11 @@ struct ContentView: View {
                     .frame(minHeight: 150)
                 }
             }
+            } // Closes HStack
         }
         .onChange(of: sidebarViewModel.selectedFileURL) { newURL in
             guard let url = newURL else { return }
-            
-            // Skip directories
-            var isDir: ObjCBool = false
-            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-            if isDir.boolValue { return }
-            
-            if !openFiles.contains(url) {
-                if let code = cli.loadSketchCode(from: url) {
-                    openFiles.append(url)
-                    fileContents[url] = code
-                } else {
-                    cli.consoleOutput += "Could not read file at \(url.path)\n"
-                    return
-                }
-            }
-            activeFileURL = url
+            openFile(url)
         }
         .frame(minWidth: 850, minHeight: 500)
         .preferredColorScheme(activeColorScheme)
@@ -695,14 +699,36 @@ struct ContentView: View {
     
     func installZipLibraryUI() {
         let panel = NSOpenPanel()
-        panel.title = "Select Library .ZIP"
-        panel.allowedContentTypes = [.zip]
-        panel.allowsMultipleSelection = false
+        panel.title = "Select Library ZIP"
+        panel.allowedContentTypes = [UTType.zip]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
         
         if panel.runModal() == .OK, let url = panel.url {
             cli.runCommand(arguments: ["lib", "install", "--zip-path", url.path])
-            isShowingLibraryManager = false
+            // isShowingLibraryManager = false // Was removed from the original patch context but we just need to run the command. Wait, let's keep it safe.
         }
+    }
+    
+    private func openFile(_ url: URL) {
+        // Skip directories
+        var isDir: ObjCBool = false
+        FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        if isDir.boolValue { return }
+        
+        if !openFiles.contains(url) {
+            let ext = url.pathExtension.lowercased()
+            if ["png", "jpg", "jpeg"].contains(ext) {
+                openFiles.append(url)
+            } else if let code = cli.loadSketchCode(from: url) {
+                openFiles.append(url)
+                fileContents[url] = code
+            } else {
+                cli.consoleOutput += "Could not read file at \(url.path)\n"
+                return
+            }
+        }
+        activeFileURL = url
     }
     
     func performSearch(query: String) {

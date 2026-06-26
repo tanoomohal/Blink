@@ -32,6 +32,9 @@ struct OutputConsoleView: View {
                 OutputTab(title: "Serial Monitor", isActive: selectedTab == 1) {
                     selectedTab = 1
                 }
+                OutputTab(title: "Serial Plotter", isActive: selectedTab == 2) {
+                    selectedTab = 2
+                }
                 Spacer()
             }
             .padding(.horizontal)
@@ -52,7 +55,7 @@ struct OutputConsoleView: View {
                             .padding()
                     }
                     .background(Theme.background)
-                } else {
+                } else if selectedTab == 1 {
                     VStack(spacing: 0) {
                         ScrollView {
                             Text(serialMonitor.output)
@@ -87,6 +90,8 @@ struct OutputConsoleView: View {
                         .padding()
                         .background(Theme.panelBackground)
                     }
+                } else if selectedTab == 2 {
+                    SerialPlotterView(serialMonitor: serialMonitor)
                 }
                 
                 // Floating Control Bar
@@ -100,8 +105,14 @@ struct OutputConsoleView: View {
                     Button(action: {}) {
                         Image(systemName: "pencil")
                     }
-                    Button(action: {}) {
-                        Image(systemName: "message")
+                    Button(action: {
+                        if selectedTab == 2 {
+                            serialMonitor.clearPlotter()
+                        } else {
+                            serialMonitor.output = ""
+                        }
+                    }) {
+                        Image(systemName: "trash")
                     }
                 }
                 .foregroundColor(.secondary)

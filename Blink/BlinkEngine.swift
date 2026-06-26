@@ -302,10 +302,20 @@ class ArduinoCLI: ObservableObject {
     }
 }
 
+struct PlotterDataPoint: Identifiable, Equatable {
+    let id = UUID()
+    let time: Date
+    let value: Double
+    let series: String
+}
+
 // --- Serial Monitor Connection ---
 class SerialMonitorConnection: ObservableObject {
     @Published var output: String = ""
     @Published var isRunning = false
+    @Published var plotterData: [PlotterDataPoint] = []
+    
+    private var dataBuffer: String = ""
     
     private var process: Process?
     private var stdinPipe: Pipe?
@@ -338,6 +348,7 @@ class SerialMonitorConnection: ObservableObject {
             guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
             DispatchQueue.main.async {
                 self?.output += text
+                self?.parsePlotterData(from: text)
             }
         }
         
@@ -373,6 +384,46 @@ class SerialMonitorConnection: ObservableObject {
             stdinPipe?.fileHandleForWriting.write(data)
             DispatchQueue.main.async {
                 self.output += ">> \(text)\n"
+            }
+        }
+    }
+    
+    func clearPlotter() {
+        plotterData = []
+        dataBuffer = ""
+    }
+    
+    private func parsePlotterData(from newText: String) {
+        dataBuffer += newText
+        let lines = dataBuffer.components(separatedBy: .newlines)
+        
+        if lines.count > 1 {
+            for i in 0..<(lines.count - 1) {
+                let line = lines[i].trimmingCharacters(in: .whitespaces)
+                if !line.isEmpty {
+                    extractNumbers(from: line)
+                }
+            }
+            dataBuffer = lines.last ?? ""
+        }
+    }
+    
+    private func extractNumbers(from line: String) {
+        let components = line.components(separatedBy: CharacterSet(charactersIn: ", \t"))
+        let numbers = components.compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        
+        if !numbers.isEmpty {
+            let now = Date()
+            var newPoints: [PlotterDataPoint] = []
+            for (index, value) in numbers.enumerated() {
+                newPoints.append(PlotterDataPoint(time: now, value: value, series: "Series \(index + 1)"))
+            }
+            
+            plotterData.append(contentsOf: newPoints)
+            
+            let maxPoints = numbers.count * 500
+            if plotterData.count > maxPoints {
+                plotterData.removeFirst(plotterData.count - maxPoints)
             }
         }
     }

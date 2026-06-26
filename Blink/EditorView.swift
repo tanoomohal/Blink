@@ -26,16 +26,38 @@ struct EditorView: View {
                 .background(Theme.border)
             
             // Editor Content
-            if let activeURL = activeFileURL, let content = fileContents[activeURL] {
-                SyntaxTextView(
-                    text: Binding(
-                        get: { content },
-                        set: { newValue in
-                            fileContents[activeURL] = newValue
-                        }
+            if let activeURL = activeFileURL {
+                if let content = fileContents[activeURL] {
+                    SyntaxTextView(
+                        text: Binding(
+                            get: { content },
+                            set: { newValue in
+                                fileContents[activeURL] = newValue
+                            }
+                        )
                     )
-                )
-                .background(Theme.background)
+                    .background(Theme.background)
+                } else if ["png", "jpg", "jpeg"].contains(activeURL.pathExtension.lowercased()), let nsImage = NSImage(contentsOf: activeURL) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .scaledToFit()
+                        .padding()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Theme.background)
+                } else {
+                    VStack {
+                        Spacer()
+                        Image(systemName: "doc.viewfinder")
+                            .font(.system(size: 60))
+                            .foregroundColor(.secondary.opacity(0.5))
+                        Text("Preview not available")
+                            .foregroundColor(.secondary)
+                            .padding()
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Theme.background)
+                }
             } else {
                 VStack {
                     Spacer()
@@ -75,12 +97,12 @@ struct EditorTab: View {
         HStack(spacing: 8) {
             Text(title)
                 .font(.system(size: 12))
-                .foregroundColor(isActive ? .white : .secondary)
+                .foregroundColor(isActive ? .primary : .secondary)
             
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 10))
-                    .foregroundColor(isHovering ? .white : .secondary)
+                    .foregroundColor(isHovering ? .primary : .secondary)
             }
             .buttonStyle(.plain)
             .opacity((isActive || isHovering) ? 1 : 0)
@@ -127,11 +149,16 @@ struct SyntaxTextView: NSViewRepresentable {
         scrollView.autohidesScrollers = true
         
         let textView = NSTextView()
+        textView.autoresizingMask = [.width]
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainer?.widthTracksTextView = true
+        
         textView.isRichText = false
         textView.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         textView.backgroundColor = NSColor(Theme.background)
         textView.textColor = Theme.plainText
-        textView.insertionPointColor = .white
+        textView.insertionPointColor = Theme.plainText
         
         // Disable smart quotes/dashes which break code
         textView.isAutomaticQuoteSubstitutionEnabled = false
