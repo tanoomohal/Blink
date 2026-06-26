@@ -7,9 +7,12 @@ struct ContentView: View {
     @StateObject private var serialMonitor = SerialMonitorConnection()
     
     // Editor State
-    @State private var code: String = "// Click 'New' to create a sketch and start coding!\n"
+    @StateObject private var sidebarViewModel = SidebarViewModel()
+    @State private var openFiles: [URL] = []
+    @State private var activeFileURL: URL?
+    @State private var fileContents: [URL: String] = [:]
+    
     @State private var currentSketchDirectory: URL?
-    @State private var currentSketchFileURL: URL?
     
     // Hardware State
     @State private var fqbn: String = ""
@@ -87,7 +90,7 @@ struct ContentView: View {
                         Button(action: saveSketchUI) {
                             Label("Save", systemImage: "square.and.arrow.down")
                         }
-                        .disabled(currentSketchFileURL == nil)
+                        .disabled(activeFileURL == nil)
                     }
                     
                     Divider().frame(height: 20)
@@ -201,88 +204,51 @@ struct ContentView: View {
                 }
                 .padding()
             }
-            .background(.regularMaterial)
+            .background(Theme.panelBackground)
             
-            Divider()
+            Divider().background(Theme.border)
             
             // Main workspace: Resizable Split View
-            VSplitView {
-                // Top Half: Native Syntax Highlighting Code Editor
-                SyntaxTextView(text: $code, fontSize: editorFontSize)
-                    .frame(minHeight: 200)
+            HSplitView {
+                SidebarView(viewModel: sidebarViewModel)
+                    .frame(minWidth: 150, idealWidth: 200, maxWidth: 300)
                 
-                // Bottom Half: Console / Serial Monitor
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        Picker("", selection: $selectedBottomTab) {
-                            Text("Console").tag(0)
-                            Text("Serial Monitor").tag(1)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(width: 250)
-                        
-                        Spacer()
-                        
-                        if selectedBottomTab == 1 {
-                            Picker("Baud:", selection: $selectedBaudRate) {
-                                ForEach(baudRates, id: \.self) { b in
-                                    Text(b).tag(b)
-                                }
-                            }
-                            .frame(width: 120)
-                            
-                            Button(serialMonitor.isRunning ? "Disconnect" : "Connect") {
-                                if serialMonitor.isRunning {
-                                    serialMonitor.stop()
-                                } else {
-                                    serialMonitor.start(port: port, baud: selectedBaudRate)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal)
-                    .padding(.top, 6)
-                    .padding(.bottom, 6)
-                    .background(.regularMaterial)
+                VSplitView {
+                    EditorView(
+                        openFiles: $openFiles,
+                        activeFileURL: $activeFileURL,
+                        fileContents: $fileContents
+                    )
+                    .frame(minHeight: 200)
                     
-                    if selectedBottomTab == 0 {
-                        TextEditor(text: $cli.consoleOutput)
-                            .font(.system(.footnote, design: .monospaced))
-                            .scrollContentBackground(.hidden)
-                            .background(Color(NSColor.textBackgroundColor))
-                            .frame(minHeight: 100)
-                    } else {
-                        VStack(spacing: 0) {
-                            TextEditor(text: $serialMonitor.output)
-                                .font(.system(.footnote, design: .monospaced))
-                                .scrollContentBackground(.hidden)
-                                .background(Color(NSColor.textBackgroundColor))
-                                .frame(minHeight: 100)
-                            
-                            HStack {
-                                TextField("Send message...", text: $serialInput)
-                                    .textFieldStyle(.roundedBorder)
-                                    .onSubmit {
-                                        if !serialInput.isEmpty {
-                                            serialMonitor.send(text: serialInput)
-                                            serialInput = ""
-                                        }
-                                    }
-                                
-                                Button("Send") {
-                                    if !serialInput.isEmpty {
-                                        serialMonitor.send(text: serialInput)
-                                        serialInput = ""
-                                    }
-                                }
-                                .disabled(!serialMonitor.isRunning)
-                            }
-                            .padding(8)
-                            .background(.regularMaterial)
-                        }
-                    }
+                    OutputConsoleView(
+                        selectedTab: $selectedBottomTab,
+                        consoleOutput: $cli.consoleOutput,
+                        serialMonitor: serialMonitor,
+                        serialInput: $serialInput
+                    )
+                    .frame(minHeight: 150)
                 }
             }
+        }
+        .onChange(of: sidebarViewModel.selectedFileURL) { newURL in
+            guard let url = newURL else { return }
+            
+            // Skip directories
+            var isDir: ObjCBool = false
+            FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            if isDir.boolValue { return }
+            
+            if !openFiles.contains(url) {
+                if let code = cli.loadSketchCode(from: url) {
+                    openFiles.append(url)
+                    fileContents[url] = code
+                } else {
+                    cli.consoleOutput += "Could not read file at \(url.path)\n"
+                    return
+                }
+            }
+            activeFileURL = url
         }
         .frame(minWidth: 850, minHeight: 500)
         .preferredColorScheme(activeColorScheme)
@@ -328,44 +294,31 @@ struct ContentView: View {
             
             Form {
                 Section(header: Text("Workspace").font(.subheadline).foregroundColor(.secondary)) {
-                    HStack {
-                        Text("Sketchbook Location:")
-                            .frame(width: 140, alignment: .trailing)
-                        TextField("Path to sketchbook", text: $sketchbookLocation)
-                            .textFieldStyle(.roundedBorder)
-                    }
+                    TextField("Sketchbook Location:", text: $sketchbookLocation)
+                        .textFieldStyle(.roundedBorder)
                     
-                    HStack {
-                        Text("Language:")
-                            .frame(width: 140, alignment: .trailing)
-                        Picker("", selection: $appLanguage) {
-                            Text("English").tag("English")
-                            Text("Español").tag("Español")
-                            Text("Français").tag("Français")
-                            Text("Deutsch").tag("Deutsch")
-                        }
-                        .pickerStyle(.menu)
-                        .frame(width: 150)
+                    Picker("Language:", selection: $appLanguage) {
+                        Text("English").tag("English")
+                        Text("Español").tag("Español")
+                        Text("Français").tag("Français")
+                        Text("Deutsch").tag("Deutsch")
                     }
+                    .pickerStyle(.menu)
                 }
                 .padding(.bottom, 10)
                 
                 Section(header: Text("Editor & Theme").font(.subheadline).foregroundColor(.secondary)) {
-                    HStack {
-                        Text("Theme:")
-                            .frame(width: 140, alignment: .trailing)
-                        Picker("", selection: $appTheme) {
-                            Text("System Default").tag("System")
-                            Text("Light Mode").tag("Light")
-                            Text("Dark Mode").tag("Dark")
-                        }
-                        .pickerStyle(.segmented)
+                    Picker("Theme:", selection: $appTheme) {
+                        Text("System Default").tag("System")
+                        Text("Light Mode").tag("Light")
+                        Text("Dark Mode").tag("Dark")
                     }
+                    .pickerStyle(.segmented)
                     
                     HStack {
-                        Text("Font Size:")
-                            .frame(width: 140, alignment: .trailing)
-                        Slider(value: $editorFontSize, in: 10...30, step: 1)
+                        Slider(value: $editorFontSize, in: 10...30, step: 1) {
+                            Text("Font Size:")
+                        }
                         Text("\(Int(editorFontSize)) pt")
                             .frame(width: 40, alignment: .leading)
                     }
@@ -373,12 +326,8 @@ struct ContentView: View {
                 .padding(.bottom, 10)
                 
                 Section(header: Text("Network").font(.subheadline).foregroundColor(.secondary)) {
-                    HStack {
-                        Text("Proxy URL:")
-                            .frame(width: 140, alignment: .trailing)
-                        TextField("e.g., http://proxy.example.com:8080 (Optional)", text: $networkProxy)
-                            .textFieldStyle(.roundedBorder)
-                    }
+                    TextField("Proxy URL:", text: $networkProxy)
+                        .textFieldStyle(.roundedBorder)
                 }
             }
             .padding()
@@ -386,7 +335,7 @@ struct ContentView: View {
             Spacer()
         }
         .frame(width: 500, height: 400)
-        .background(.regularMaterial)
+        .background(Theme.panelBackground)
     }
     
     // --- Library Manager UI ---
@@ -645,10 +594,14 @@ struct ContentView: View {
                                     let inoURL = url.appendingPathComponent("\(name).ino")
                                     if let loadedCode = cli.loadSketchCode(from: inoURL) {
                                         currentSketchDirectory = url
-                                        currentSketchFileURL = inoURL
-                                        code = loadedCode
+                                        sidebarViewModel.loadDirectory(url: url)
+                                        
+                                        openFiles = [inoURL]
+                                        fileContents[inoURL] = loadedCode
+                                        activeFileURL = inoURL
+                                        
+                                        isShowingExamplesBrowser = false
                                     }
-                                    isShowingExamplesBrowser = false
                                 }) {
                                     Text(name)
                                 }
@@ -688,8 +641,14 @@ struct ContentView: View {
             
             if let newDir = cli.createNewSketch(name: name, saveDirectory: saveDir) {
                 currentSketchDirectory = newDir
-                currentSketchFileURL = newDir.appendingPathComponent("\(name).ino")
-                code = "void setup() {\n  // put your setup code here, to run once:\n\n}\n\nvoid loop() {\n  // put your main code here, to run repeatedly:\n\n}\n"
+                sidebarViewModel.loadDirectory(url: newDir)
+                
+                let fileURL = newDir.appendingPathComponent("\(name).ino")
+                let initialCode = "void setup() {\n  // put your setup code here, to run once:\n\n}\n\nvoid loop() {\n  // put your main code here, to run repeatedly:\n\n}\n"
+                
+                openFiles = [fileURL]
+                fileContents[fileURL] = initialCode
+                activeFileURL = fileURL
             }
         }
     }
@@ -716,8 +675,11 @@ struct ContentView: View {
             
             if let loadedCode = cli.loadSketchCode(from: fileURL) {
                 currentSketchDirectory = dirURL
-                currentSketchFileURL = fileURL
-                code = loadedCode
+                sidebarViewModel.loadDirectory(url: dirURL)
+                
+                openFiles = [fileURL]
+                fileContents[fileURL] = loadedCode
+                activeFileURL = fileURL
             } else {
                 cli.consoleOutput += "Could not find a valid .ino file at \(fileURL.path)\n"
             }
@@ -725,9 +687,10 @@ struct ContentView: View {
     }
     
     func saveSketchUI() {
-        if let fileURL = currentSketchFileURL {
-            cli.saveSketchCode(code: code, to: fileURL)
+        for (url, content) in fileContents {
+            cli.saveSketchCode(code: content, to: url)
         }
+        cli.consoleOutput += "Saved all open files.\n"
     }
     
     func installZipLibraryUI() {
@@ -757,106 +720,3 @@ struct ContentView: View {
     }
 }
 
-// --- Native Syntax Highlighting Text Editor ---
-
-struct SyntaxTextView: NSViewRepresentable {
-    @Binding var text: String
-    var fontSize: Double
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.autohidesScrollers = true
-        
-        let textView = NSTextView()
-        textView.autoresizingMask = [.width]
-        textView.isRichText = false
-        textView.allowsUndo = true
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.delegate = context.coordinator
-        
-        // Basic configuration
-        textView.font = NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
-        textView.backgroundColor = NSColor.textBackgroundColor
-        textView.textColor = NSColor.textColor
-        
-        scrollView.documentView = textView
-        
-        // Initial Syntax Highlighting
-        context.coordinator.applySyntaxHighlighting(to: textView)
-        
-        return scrollView
-    }
-
-    func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = scrollView.documentView as? NSTextView else { return }
-        
-        // Only update text if it actually changed to prevent cursor jumping
-        if textView.string != text {
-            textView.string = text
-            context.coordinator.applySyntaxHighlighting(to: textView)
-        }
-        
-        // Update font size dynamically if settings changed
-        if textView.font?.pointSize != CGFloat(fontSize) {
-            textView.font = NSFont.monospacedSystemFont(ofSize: CGFloat(fontSize), weight: .regular)
-        }
-    }
-
-    class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: SyntaxTextView
-        
-        // Basic C++ Keywords for Syntax Highlighting
-        let keywords = ["void", "int", "bool", "char", "float", "double", "long", "short", "if", "else", "for", "while", "return", "class", "struct", "setup", "loop", "include", "define", "const", "static", "String"]
-
-        init(_ parent: SyntaxTextView) {
-            self.parent = parent
-        }
-
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
-            applySyntaxHighlighting(to: textView)
-        }
-        
-        func applySyntaxHighlighting(to textView: NSTextView) {
-            guard let textStorage = textView.textStorage else { return }
-            let codeString = textView.string
-            let fullRange = NSRange(location: 0, length: codeString.utf16.count)
-            
-            // 1. Reset everything to standard text color
-            textStorage.removeAttribute(.foregroundColor, range: fullRange)
-            textStorage.addAttribute(.foregroundColor, value: NSColor.textColor, range: fullRange)
-            
-            // 2. Highlight Keywords (Blue)
-            let keywordPattern = "\\b(" + keywords.joined(separator: "|") + ")\\b"
-            highlightRegex(pattern: keywordPattern, color: NSColor.systemBlue, in: codeString, textStorage: textStorage)
-            
-            // 3. Highlight Strings (Red)
-            highlightRegex(pattern: "\"[^\"]*\"", color: NSColor.systemRed, in: codeString, textStorage: textStorage)
-            
-            // 4. Highlight Includes/Macros (Purple)
-            highlightRegex(pattern: "#\\w+", color: NSColor.systemPurple, in: codeString, textStorage: textStorage)
-            
-            // 5. Highlight Comments (Green) - Do this last so it overwrites keywords inside comments
-            highlightRegex(pattern: "//.*", color: NSColor.systemGreen, in: codeString, textStorage: textStorage)
-            highlightRegex(pattern: "/\\*.*?\\*/", color: NSColor.systemGreen, in: codeString, textStorage: textStorage, options: [.dotMatchesLineSeparators])
-            
-            // Re-apply the base font size to prevent formatting loss
-            textStorage.addAttribute(.font, value: NSFont.monospacedSystemFont(ofSize: CGFloat(parent.fontSize), weight: .regular), range: fullRange)
-        }
-        
-        private func highlightRegex(pattern: String, color: NSColor, in string: String, textStorage: NSTextStorage, options: NSRegularExpression.Options = []) {
-            guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else { return }
-            let matches = regex.matches(in: string, options: [], range: NSRange(location: 0, length: string.utf16.count))
-            for match in matches {
-                textStorage.addAttribute(.foregroundColor, value: color, range: match.range)
-            }
-        }
-    }
-}
